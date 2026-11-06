@@ -1,0 +1,2 @@
+{"timestamp": "2026-11-06T08:50:59.951783+00:00", "severity": "HIGH", "priority": "P1", "category": "IAM_PERSISTENCE", "message": "Detached policies and deleted rogue user rogue-admin-backdoor", "source": "soar_containment.py", "apra_cps234_ref": "Para 27-29 (Incident Management)"}
+{"timestamp": "2026-11-06T09:19:32.125608+00:00", "severity": "HIGH", "priority": "P1", "category": "IAM_PERSISTENCE", "message": "Detached policies and deleted rogue user rogue-admin-backdoor", "source": "soar_containment.py", "apra_cps234_ref": "Para 27-29 (Incident Management)"}

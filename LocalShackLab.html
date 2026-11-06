@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloud SOC Lab — Incident Response &amp; Threat Detection</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#0b0f1a; --panel:#131a2b; --panel2:#0f1524; --border:#26304a;
+    --ink:#e8edf7; --muted:#9aa7c2; --accent:#4ea1ff; --accent2:#7c5cff;
+    --crit:#ff5f6d; --high:#ff9f43; --med:#ffd166; --ok:#38d39f; --mono:#cbd5f5;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0b0f1a,#0d1222);color:var(--ink);
+    font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.6}
+  header{padding:48px 24px 32px;text-align:center;border-bottom:1px solid var(--border);
+    background:radial-gradient(1200px 400px at 50% -50%,rgba(78,161,255,.18),transparent)}
+  header h1{margin:0 0 8px;font-size:2rem;letter-spacing:.3px}
+  header p{margin:4px 0;color:var(--muted)}
+  .badge{display:inline-block;margin:6px 4px 0;padding:4px 12px;border:1px solid var(--border);
+    border-radius:999px;font-size:.8rem;color:var(--muted);background:var(--panel2)}
+  main{max-width:1080px;margin:0 auto;padding:24px}
+  section{margin:40px 0}
+  h2{font-size:1.35rem;border-left:3px solid var(--accent);padding-left:12px;margin-bottom:16px}
+  h3{font-size:1.05rem;color:var(--ink);margin:18px 0 8px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;margin:14px 0}
+  .grid{display:grid;gap:16px}
+  .grid.cols-3{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+  .grid.cols-2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .metric{text-align:center}
+  .metric .num{font-size:2.2rem;font-weight:700}
+  .metric .label{color:var(--muted);font-size:.85rem;text-transform:uppercase;letter-spacing:.5px}
+  .crit{color:var(--crit)} .high{color:var(--high)} .med{color:var(--med)} .ok{color:var(--ok)}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.72rem;font-weight:700;
+    text-transform:uppercase;letter-spacing:.4px}
+  .pill.crit{background:rgba(255,95,109,.15);color:var(--crit);border:1px solid var(--crit)}
+  .pill.high{background:rgba(255,159,67,.15);color:var(--high);border:1px solid var(--high)}
+  .pill.med{background:rgba(255,209,102,.15);color:var(--med);border:1px solid var(--med)}
+  pre{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:14px;
+    overflow:auto;color:var(--mono);font-family:"SF Mono",Consolas,Monaco,monospace;font-size:.85rem}
+  code{font-family:"SF Mono",Consolas,Monaco,monospace;color:#9fd5ff}
+  .mermaid{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:20px;text-align:center}
+  table{width:100%;border-collapse:collapse;font-size:.9rem}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.5px}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .tab{padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);
+    color:var(--muted);cursor:pointer;font-size:.9rem;transition:.15s}
+  .tab.active{background:var(--accent);color:#06101f;border-color:var(--accent);font-weight:600}
+  .panel{display:none} .panel.active{display:block}
+  .mitre{font-family:monospace;color:var(--accent2);font-weight:700}
+  .note{border-left:3px solid var(--accent2);background:rgba(124,92,255,.08);padding:14px 16px;border-radius:0 10px 10px 0}
+  footer{text-align:center;color:var(--muted);padding:32px 24px;border-top:1px solid var(--border);font-size:.85rem}
+  a{color:var(--accent)}
+  figure{margin:0 0 18px}
+  figure img{width:100%;display:block;border:1px solid var(--border);border-radius:10px;background:#0f1524}
+  figcaption{color:var(--muted);font-size:.85rem;margin-top:8px;text-align:center}
+  .shotgrid{display:grid;gap:22px;grid-template-columns:1fr}
+  .accesscard{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+  .accesscard code{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:3px 8px;display:inline-block}
+</style>
+</head>
+<body>
+<header>
+  <h1>Cloud SOC Lab — Incident Response &amp; Threat Detection</h1>
+  <p>A self-contained detection-engineering lab: simulated AWS breach, SIEM ingestion, and automated SOAR containment.</p>
+  <div>
+    <span class="badge">LocalStack (mock AWS)</span>
+    <span class="badge">Elasticsearch 8.15</span>
+    <span class="badge">Kibana 8.15</span>
+    <span class="badge">MITRE ATT&amp;CK</span>
+    <span class="badge">APRA CPS 234</span>
+  </div>
+</header>
+
+<main>
+
+<section id="overview">
+  <h2>Executive Summary</h2>
+  <div class="card">
+    <p>This lab simulates a multi-stage cloud breach across a mock financial-services AWS environment —
+    spanning identity (IAM/STS), compute (EC2), storage (S3), and database (DynamoDB/RDS) resources —
+    then ingests the resulting CloudTrail telemetry into an Elasticsearch/Kibana SIEM and demonstrates
+    detection and automated containment across <strong>three distinct attack pathways</strong>. Everything runs locally against
+    <a href="http://localhost:4566">LocalStack</a> — no real AWS account is ever touched. Guard rails in
+    every script refuse to run unless the endpoint resolves to <code>localhost</code>.</p>
+    <div class="grid cols-3" style="margin-top:18px">
+      <div class="metric card"><div class="num crit">15</div><div class="label">CloudTrail events indexed</div></div>
+      <div class="metric card"><div class="num high">3</div><div class="label">Attack pathways</div></div>
+      <div class="metric card"><div class="num ok">6</div><div class="label">Cloud resource types</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="architecture">
+  <h2>1 · Architecture</h2>
+  <p>The lab models a mock bank's AWS estate across identity, compute, storage, and database tiers on
+  LocalStack. A simulated adversary moves through three attack pathways; every API call is captured as
+  CloudTrail telemetry, normalised by an ingest pipeline, indexed in Elasticsearch, and surfaced for
+  analysts in Kibana, with automated SOAR containment on the response side.</p>
+  <div class="mermaid">
+flowchart LR
+    ATK(["Adversary"])
+    subgraph AWS["LocalStack — Mock AWS estate (:4566)"]
+        direction TB
+        IAM["IAM / STS<br/>roles &amp; tokens"]
+        EC2["EC2 workload<br/>+ IMDS"]
+        DDB[("DynamoDB / RDS<br/>TransactionsDB")]
+        S3PII[("S3: bofa-customer-pii")]
+        S3LOG[("S3: bofa-soc-central-logs")]
+        SNAP["RDS snapshot /<br/>AMI share"]
+    end
+    subgraph SIEM["SIEM &amp; Response"]
+        ING["ingest_cloudtrail.py<br/>pipeline + mapping"]
+        ES[("Elasticsearch 8.15<br/>cloudtrail-logs-v1")]
+        KB["Kibana 8.15 (:5601)<br/>dashboards + hunts"]
+        SOAR["soar_containment.py"]
+    end
+    ATK -->|P1 token theft| IAM
+    ATK -->|P2 workload exploit| EC2
+    EC2 -->|IMDS creds| IAM
+    IAM -->|exfil| S3PII
+    EC2 -->|DB recon| DDB
+    ATK -->|P3 snapshot share| SNAP
+    DDB -. backs .- SNAP
+    AWS -. CloudTrail events .-> ING
+    ING --> ES --> KB
+    SOAR -->|contain| IAM
+    SOAR -->|restore logging| S3LOG
+    SOAR -->|alerts| ES
+  </div>
+  <div class="note" style="margin-top:14px">
+    <strong>Why the ingestion broke &amp; how it was fixed:</strong> CloudTrail events carry highly
+    variable nested objects (<code>requestParameters</code>, <code>responseElements</code>,
+    <code>userIdentity</code>). Elasticsearch default <em>dynamic mapping</em> inferred conflicting types
+    across events and silently dropped documents. The fix maps those volatile sub-objects as
+    <code>flattened</code> and adds an ingest pipeline that promotes <code>eventTime</code> to
+    <code>@timestamp</code>, so every event indexes cleanly and is time-filterable in Kibana.
+  </div>
+</section>
+
+<section id="triage">
+  <h2>2 · Triage &amp; Detection Walkthroughs</h2>
+  <div class="tabs">
+    <div class="tab active" data-t="s1">Pathway 1 · Identity Token Theft → Storage Exfil</div>
+    <div class="tab" data-t="s2">Pathway 2 · Workload Exploit, IMDS &amp; DB Recon</div>
+    <div class="tab" data-t="s3">Pathway 3 · Unauthorized DB Snapshot Sharing</div>
+  </div>
+
+  <div class="panel active" id="s1">
+    <div class="card">
+      <h3>Identity Token Theft to Storage Exfiltration <span class="pill crit">Critical</span>
+        <span class="mitre">T1552.005 · T1530</span></h3>
+      <p><strong>Resources crossed:</strong> IAM/STS → S3. <strong>Source IP</strong>
+      <code>203.0.113.47</code>.</p>
+      <p><strong>Kill chain:</strong> A leaked CI access key runs <code>GetCallerIdentity</code> (recon),
+      then <code>AssumeRole</code> into <code>FinancialTransactionProcessorRole</code> (session
+      <code>token-theft</code>). With the stolen token the actor runs <code>ListBuckets</code>, then
+      <code>GetObject</code> on <code>bofa-customer-pii</code> to pull
+      <code>exports/cardholder-2026.csv</code>. A probe of the hardened
+      <code>bofa-soc-central-logs</code> bucket returns <code>AccessDenied</code> — the control held.</p>
+      <p><strong>Triage &amp; response:</strong> Pivot on the stolen <code>accessKeyId</code> across all
+      services, revoke the session, rotate the leaked key, and confirm the PII read against known-good
+      access patterns. The AccessDenied on the log bucket evidences the CPS 234 Para 22 public-access
+      control working.</p>
+    </div>
+  </div>
+
+  <div class="panel" id="s2">
+    <div class="card">
+      <h3>Workload Exploit, IMDS Theft &amp; DB Recon <span class="pill crit">Critical</span>
+        <span class="mitre">T1552.005 · T1580 · T1213</span></h3>
+      <p><strong>Resources crossed:</strong> EC2 → IMDS/IAM → EC2/RDS/DynamoDB. <strong>Source IP</strong>
+      <code>198.51.100.23</code>.</p>
+      <p><strong>Kill chain:</strong> An exploited web workload harvests instance credentials via the
+      metadata service — <code>AssumeRole</code> <em>invokedBy ec2.amazonaws.com</em> into
+      <code>EC2-Web-InstanceRole</code>. Those creds drive reconnaissance: <code>DescribeInstances</code>,
+      <code>DescribeDBInstances</code>, then a bulk <code>Scan</code> of <code>TransactionsDB</code>
+      (48k records) and a targeted <code>GetItem</code> on a VIP account.</p>
+      <p><strong>Triage &amp; response:</strong> Credentials used from an IP outside the instance's own
+      egress are the tell. Quarantine the instance, revoke the role session, enforce IMDSv2
+      (hop-limit 1), and alert on any DynamoDB <code>Scan</code> from an instance-profile principal.</p>
+    </div>
+  </div>
+
+  <div class="panel" id="s3">
+    <div class="card">
+      <h3>Unauthorized DB Snapshot Sharing <span class="pill crit">Critical</span>
+        <span class="mitre">T1537 · T1562.008</span></h3>
+      <p><strong>Resources crossed:</strong> RDS/EC2 → external AWS account. <strong>Source IP</strong>
+      <code>192.0.2.88</code>.</p>
+      <p><strong>Kill chain:</strong> The actor takes <code>CreateDBSnapshot</code> of
+      <code>bank-core-db</code>, then <code>ModifyDBSnapshotAttribute</code> to share
+      <code>bank-core-db-exfil</code> with external account <code>999988887777</code> — and again with
+      <code>all</code> (public). A workload AMI is shared out via
+      <code>ModifyImageAttribute</code>, and finally <code>StopLogging</code> disables CloudTrail to
+      blind the audit trail.</p>
+      <p><strong>Triage &amp; response:</strong> Any snapshot/AMI attribute change adding an unknown
+      account or <code>all</code> is a data-exfiltration event — revoke the share immediately, delete the
+      rogue snapshot, and treat <code>StopLogging</code> as a high-severity evasion signal.
+      <code>soar_containment.py</code> auto-restores logging and emits the alert.</p>
+    </div>
+  </div>
+</section>
+
+<section id="hunting">
+  <h2>3 · KQL Threat-Hunting Queries (Kibana)</h2>
+  <p>Run these in Kibana → Discover against the <code>cloudtrail-logs-*</code> data view.</p>
+  <div class="grid cols-2">
+    <div class="card">
+      <h3>P1 · Stolen identity exfiltrating PII</h3>
+      <pre>event.action : "GetObject"
+  and requestParameters.bucketName : "bofa-customer-pii"
+  and userIdentity.type : "AssumedRole"</pre>
+    </div>
+    <div class="card">
+      <h3>P2 · IMDS credential theft from workload</h3>
+      <pre>event.action : "AssumeRole"
+  and userIdentity.invokedBy : "ec2.amazonaws.com"
+  and not source.ip : 10.0.0.0/8</pre>
+    </div>
+    <div class="card">
+      <h3>P2 · Bulk database reconnaissance</h3>
+      <pre>eventSource : "dynamodb.amazonaws.com"
+  and event.action : ("Scan" or "DescribeTable")</pre>
+    </div>
+    <div class="card">
+      <h3>P3 · Snapshot / AMI shared externally</h3>
+      <pre>event.action : ("ModifyDBSnapshotAttribute" or "ModifyImageAttribute")
+  and (requestParameters.valuesToAdd : "all"
+       or requestParameters.attributeName : "restore")</pre>
+    </div>
+    <div class="card">
+      <h3>Cross-pathway · Critical events only</h3>
+      <pre>severity : "CRITICAL"</pre>
+    </div>
+    <div class="card">
+      <h3>Defense evasion (log tampering)</h3>
+      <pre>event.action : ("StopLogging" or "DeleteTrail")
+  and eventSource : "cloudtrail.amazonaws.com"</pre>
+    </div>
+  </div>
+</section>
+
+<section id="metrics">
+  <h2>4 · SIEM Detection Panels</h2>
+  <div class="card">
+    <h3>Key detections across the three pathways</h3>
+    <table>
+      <thead><tr><th>Pathway</th><th>Detection</th><th>MITRE</th><th>Severity</th><th>Source IP</th></tr></thead>
+      <tbody>
+        <tr><td>P1</td><td>Stolen Identity — Role Assumption</td><td class="mitre">T1552.005</td><td><span class="pill crit">Critical</span></td><td>203.0.113.47</td></tr>
+        <tr><td>P1</td><td>Sensitive Data Exfiltration — PII bucket read</td><td class="mitre">T1530</td><td><span class="pill crit">Critical</span></td><td>203.0.113.47</td></tr>
+        <tr><td>P2</td><td>IMDS Credential Theft via SSRF</td><td class="mitre">T1552.005</td><td><span class="pill crit">Critical</span></td><td>198.51.100.23</td></tr>
+        <tr><td>P2</td><td>Bulk Database Read — DynamoDB Scan</td><td class="mitre">T1213</td><td><span class="pill high">High</span></td><td>198.51.100.23</td></tr>
+        <tr><td>P3</td><td>Unauthorized Snapshot Sharing (external acct)</td><td class="mitre">T1537</td><td><span class="pill crit">Critical</span></td><td>192.0.2.88</td></tr>
+        <tr><td>P3</td><td>Snapshot Made Public (restore=all)</td><td class="mitre">T1537</td><td><span class="pill crit">Critical</span></td><td>192.0.2.88</td></tr>
+        <tr><td>P3</td><td>Defense Evasion — CloudTrail disabled</td><td class="mitre">T1562.008</td><td><span class="pill crit">Critical</span></td><td>192.0.2.88</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="grid cols-3">
+    <div class="metric card"><div class="num crit">6</div><div class="label">Critical</div></div>
+    <div class="metric card"><div class="num high">2</div><div class="label">High</div></div>
+    <div class="metric card"><div class="num med">6</div><div class="label">Medium</div></div>
+    <div class="metric card"><div class="num ok">1</div><div class="label">Low</div></div>
+  </div>
+</section>
+
+<section id="implementation">
+  <h2>5 · Live Implementation &amp; Screenshots</h2>
+  <p>The screenshots below are from my running deployment of this lab — a live Elasticsearch/Kibana SIEM
+  with LocalStack, showing the ingested CloudTrail telemetry and the dashboards I built on top of it.</p>
+
+  <div class="card accesscard">
+    <div>
+      <h3 style="margin-top:0">Accessing the live Kibana</h3>
+      <p>While the Docker stack is running, the SIEM and dashboards are reachable locally:</p>
+      <p>
+        Kibana: <code>http://localhost:5601</code><br>
+        Dashboard: <code>http://localhost:5601/app/dashboards#/view/soc-cloudtrail-dashboard</code><br>
+        Data view: <code>cloudtrail-logs-*</code> (time field <code>@timestamp</code>)
+      </p>
+      <p style="color:var(--muted);font-size:.9rem">Run <code>docker compose up -d</code> then
+      <code>python ingest_cloudtrail.py</code> and <code>python create_dashboards.py</code> to recreate
+      the SIEM, data, and dashboards from scratch.</p>
+    </div>
+  </div>
+
+  <div class="shotgrid">
+    <figure>
+      <img src="assets/architecture.jpg" alt="Cloud architecture diagram across the mock AWS estate">
+      <figcaption>Cloud architecture — the mock AWS estate (IAM/STS, EC2 + IMDS, S3 PII &amp; log
+      buckets, DynamoDB/RDS, snapshot/AMI sharing) and the three attack pathways feeding CloudTrail
+      telemetry into the Elasticsearch/Kibana SIEM with SOAR containment.</figcaption>
+    </figure>
+    <figure>
+      <img src="assets/kibana-dashboard.jpg" alt="Kibana SOC dashboard with detection visualizations">
+      <figcaption>Kibana dashboard <em>“SOC — CloudTrail Threat Detection”</em>: 15 indexed events,
+      split by attack pathway, severity breakdown (6 critical / 2 high), MITRE technique distribution,
+      API-action mix, and a detections-by-source-IP table.</figcaption>
+    </figure>
+    <figure>
+      <img src="assets/kibana-discover.jpg" alt="Kibana Discover showing CloudTrail log documents">
+      <figcaption>Kibana Discover — the raw multi-resource CloudTrail documents with analyst columns
+      (<code>event.action</code>, <code>detection_name</code>, <code>severity</code>,
+      <code>source.ip</code>, <code>pathway</code>).</figcaption>
+    </figure>
+    <figure>
+      <img src="assets/kibana-hunt.jpg" alt="Kibana Discover KQL threat-hunting query results">
+      <figcaption>Threat hunt in action — a KQL query isolates the critical-severity events across all
+      three pathways (token theft, IMDS theft, snapshot sharing), terms highlighted.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="runbook">
+  <h2>6 · Reproduce the Lab</h2>
+  <div class="card">
+<pre># 1. Bring up the stack (Elasticsearch, Kibana, LocalStack)
+docker compose up -d
+
+# 2. Provision mock AWS resources on LocalStack
+python bofa_lab_setup.py
+
+# 3. Simulate the P1 breach, then run automated containment
+python simulate_p1_breach.py
+python soar_containment.py
+
+# 4. Ingest CloudTrail telemetry into the SIEM (creates pipeline + mapping)
+python ingest_cloudtrail.py
+
+# 5. Confirm logs are indexed
+curl http://localhost:9200/cloudtrail-logs-v1/_count
+
+# 6. Build the Kibana data view + dashboards
+python create_dashboards.py
+
+# 7. Open Kibana and hunt
+open http://localhost:5601/app/dashboards#/view/soc-cloudtrail-dashboard</pre>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  Cloud SOC Incident Response &amp; Threat Detection Lab · LocalStack + Elasticsearch + Kibana ·
+  Detection engineering portfolio project.
+</footer>
+
+<script>
+  mermaid.initialize({startOnLoad:true, theme:'dark',
+    themeVariables:{primaryColor:'#131a2b',primaryBorderColor:'#4ea1ff',lineColor:'#7c5cff',
+    primaryTextColor:'#e8edf7',fontSize:'14px'}});
+  document.querySelectorAll('.tab').forEach(function(t){
+    t.addEventListener('click',function(){
+      var g=t.parentElement;
+      g.querySelectorAll('.tab').forEach(function(x){x.classList.remove('active')});
+      t.classList.add('active');
+      document.querySelectorAll('#triage .panel').forEach(function(p){p.classList.remove('active')});
+      document.getElementById(t.dataset.t).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Incident Response & Attack Path Visualizer</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- PDF.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        body { background-color: #0b0f19; color: #f1f5f9; font-family: system-ui, -apple-system, sans-serif; }
+        .canvas-grid { background-image: radial-gradient(#1e293b 1px, transparent 1px); background-size: 24px 24px; }
+        .defender-halo { box-shadow: 0 0 0 3px #eab308, 0 0 20px rgba(234, 179, 8, 0.4); }
+        .node-threat { border-color: #f43f5e; box-shadow: 0 0 15px rgba(244, 63, 94, 0.3); }
+        .node-active { border-color: #38bdf8; box-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
+        .node-target { border-color: #fbbf24; box-shadow: 0 0 15px rgba(251, 191, 36, 0.3); }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur px-6 py-4 flex flex-col md:flex-row items-center justify-between sticky top-0 z-50 gap-4">
+        <div class="flex items-center space-x-3">
+            <i data-lucide="shield-alert" class="w-7 h-7 text-sky-400"></i>
+            <div>
+                <h1 class="text-lg font-bold text-slate-100">Microsoft Defender XDR Attack Path Visualizer</h1>
+                <p class="text-xs text-slate-400">Sentinel KQL Scoping, Confluence SOPs & Alert Noise Reduction</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-3">
+            <a href="#presentation" class="px-3.5 py-1.5 text-xs font-semibold bg-sky-500 hover:bg-sky-400 text-slate-950 rounded-md transition flex items-center shadow-lg shadow-sky-500/20">
+                <i data-lucide="presentation" class="w-3.5 h-3.5 mr-1.5"></i> Slide Deck
+            </a>
+        </div>
+    </header>
+
+    <!-- Main Dashboard Body -->
+    <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6">
+
+        <!-- Pathway Selector & Controls (3 Cols) -->
+        <div class="lg:col-span-3 space-y-4">
+            <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4">
+                <h2 class="text-sm font-bold text-slate-200 uppercase tracking-wider mb-3 flex items-center">
+                    <i data-lucide="layers" class="w-4 h-4 mr-2 text-sky-400"></i> Select Attack Pathway
+                </h2>
+                <div class="space-y-2">
+                    <button onclick="loadPathway('identity')" id="btn-identity" class="w-full text-left p-3 rounded-lg border border-sky-500/30 bg-sky-500/10 transition group">
+                        <div class="font-semibold text-sm text-sky-300">Pathway 1: Identity & Storage Exfil</div>
+                        <div class="text-xs text-slate-400 mt-1">Entra ID Token Theft → IAM Key → GetBlob</div>
+                    </button>
+                    <button onclick="loadPathway('compute')" id="btn-compute" class="w-full text-left p-3 rounded-lg border border-slate-800 bg-slate-800/40 hover:bg-slate-800 transition group">
+                        <div class="font-semibold text-sm text-slate-300">Pathway 2: Workload RCE & IMDS</div>
+                        <div class="text-xs text-slate-400 mt-1">Public Exploit → IMDS 169.254.169.254 → DB Scan</div>
+                    </button>
+                    <button onclick="loadPathway('database')" id="btn-database" class="w-full text-left p-3 rounded-lg border border-slate-800 bg-slate-800/40 hover:bg-slate-800 transition group">
+                        <div class="font-semibold text-sm text-slate-300">Pathway 3: Snapshot Hijacking</div>
+                        <div class="text-xs text-slate-400 mt-1">IAM Compromise → ModifyDBSnapshot → Sharing</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Forensic Integrity Mandate Card -->
+            <div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+                <div class="flex items-center space-x-2 text-amber-400 font-bold text-xs uppercase tracking-wide mb-2">
+                    <i data-lucide="alert-triangle" class="w-4 h-4"></i> Mandatory SOC Containment Policy
+                </div>
+                <p class="text-xs text-slate-300 leading-relaxed">
+                    Always isolate network sockets via <strong>Defender / CrowdStrike EDR Agent</strong>. Never power off or terminate cloud VMs—powering down destroys volatile memory (RAM), injected DLL artifacts, and process trees.
+                </p>
+            </div>
+        </div>
+
+        <!-- Center Interactive Graph & Step Selector (9 Cols) -->
+        <div class="lg:col-span-9 space-y-6">
+            
+            <!-- Graph Node Canvas -->
+            <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-5 canvas-grid relative min-h-[380px] flex flex-col justify-between">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-xs font-semibold text-sky-400 uppercase tracking-wider flex items-center">
+                        <i data-lucide="shield" class="w-4 h-4 mr-1.5"></i> Defender XDR Attack Graph Topology
+                    </span>
+                    <span id="path-title" class="text-xs font-mono text-slate-300 bg-slate-950 px-3 py-1 rounded border border-slate-800">Pathway 1</span>
+                </div>
+
+                <!-- Interactive Step Progress Bar -->
+                <div class="flex justify-around items-center my-4 bg-slate-950/80 p-3 rounded-xl border border-slate-800" id="step-bar">
+                    <!-- Dynamic Step Buttons Rendered Here -->
+                </div>
+
+                <!-- Nodes Canvas -->
+                <div id="graph-container" class="flex items-center justify-around relative py-4 px-2 gap-4">
+                    <!-- Rendered dynamically via JS -->
+                </div>
+
+                <div class="text-center text-xs text-slate-500 border-t border-slate-800/60 pt-3">
+                    Click any step above or node below to inspect deep step-by-step attack details, KQL queries, and runbooks.
+                </div>
+            </div>
+
+            <!-- Detailed Triage & Dual-Playbook Inspector -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                <!-- Confluence Manual Analyst SOP -->
+                <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+                            <span class="text-xs font-bold text-sky-400 uppercase tracking-wider flex items-center">
+                                <i data-lucide="file-text" class="w-4 h-4 mr-1.5"></i> Confluence SOP: Manual Triage Guide
+                            </span>
+                            <span class="text-[10px] bg-sky-500/10 text-sky-300 px-2 py-0.5 rounded border border-sky-500/20">L2 Analyst Protocol</span>
+                        </div>
+                        <h4 id="sop-title" class="font-bold text-slate-200 text-sm mb-2">Step Triage SOP</h4>
+                        <ol id="sop-steps" class="list-decimal list-inside text-xs text-slate-300 space-y-2 leading-relaxed">
+                            <!-- Populated via JS -->
+                        </ol>
+                    </div>
+                </div>
+
+                <!-- Logic App SOAR Automation Playbook -->
+                <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+                            <span class="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center">
+                                <i data-lucide="filter" class="w-4 h-4 mr-1.5"></i> Logic App SOAR Noise Suppression
+                            </span>
+                            <span class="text-[10px] bg-emerald-500/10 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/20">~35% Noise Cut</span>
+                        </div>
+                        <h4 id="soar-title" class="font-bold text-slate-200 text-sm mb-2">Automated Alert Filtering</h4>
+                        <ul id="soar-steps" class="list-disc list-inside text-xs text-slate-300 space-y-2 leading-relaxed">
+                            <!-- Populated via JS -->
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Full-Width KQL Code Block -->
+                <div class="md:col-span-2 bg-slate-950 border border-slate-800 rounded-xl p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-bold text-slate-300 flex items-center font-mono">
+                            <i data-lucide="terminal" class="w-4 h-4 mr-2 text-sky-400"></i> Step Detection Query (Microsoft Sentinel KQL)
+                        </span>
+                        <span class="text-[10px] text-slate-500">Official Field Schema Verified</span>
+                    </div>
+                    <pre id="kql-code" class="text-sky-300 font-mono text-xs overflow-x-auto leading-relaxed p-2">Select step to view KQL query...</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Professional Presentation Player (PDF.js Engine) -->
+        <div id="presentation" class="lg:col-span-12 bg-slate-900/60 border border-slate-800 rounded-xl p-6 mt-4">
+            <div class="flex flex-col md:flex-row items-start md:items-center justify-between mb-4 pb-4 border-b border-slate-800 gap-4">
+                <div>
+                    <h2 class="text-base font-bold text-slate-100 flex items-center">
+                        <i data-lucide="presentation" class="w-5 h-5 mr-2 text-sky-400"></i> Executive Presentation Deck
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-0.5">Cloud Incident Response SOPs & SOAR Alert Reduction Strategy</p>
+                </div>
+                
+                <div class="flex items-center space-x-3">
+                    <div class="flex items-center bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 space-x-2 text-xs">
+                        <button id="prev-slide" class="text-slate-400 hover:text-sky-400 transition p-1">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                        </button>
+                        <span class="text-slate-300 font-mono text-xs">
+                            Slide <span id="current-slide" class="text-sky-400 font-bold">1</span> / <span id="total-slides">10</span>
+                        </span>
+                        <button id="next-slide" class="text-slate-400 hover:text-sky-400 transition p-1">
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                    
+                    <button id="fullscreen-btn" class="px-3 py-1.5 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition flex items-center">
+                        <i data-lucide="maximize-2" class="w-3.5 h-3.5 mr-1.5"></i> Present Fullscreen
+                    </button>
+                    <a href="Cloud_IR_Playbooks.pdf" download class="px-3 py-1.5 text-xs font-semibold bg-sky-500 hover:bg-sky-400 text-slate-950 rounded-lg transition flex items-center shadow-lg shadow-sky-500/20">
+                        <i data-lucide="download" class="w-3.5 h-3.5 mr-1.5"></i> Download PDF
+                    </a>
+                </div>
+            </div>
+
+            <!-- Canvas Render Container -->
+            <div id="presentation-container" class="w-full bg-slate-950 rounded-lg border border-slate-800 flex justify-center items-center h-[580px] relative overflow-hidden group">
+                <canvas id="pdf-render-canvas" class="max-w-full max-h-full object-contain shadow-2xl rounded"></canvas>
+                
+                <button id="hover-prev" class="absolute left-4 bg-slate-900/80 hover:bg-sky-500 text-slate-300 hover:text-slate-950 p-3 rounded-full backdrop-blur border border-slate-700 transition opacity-0 group-hover:opacity-100 shadow-xl">
+                    <i data-lucide="chevron-left" class="w-6 h-6"></i>
+                </button>
+                <button id="hover-next" class="absolute right-4 bg-slate-900/80 hover:bg-sky-500 text-slate-300 hover:text-slate-950 p-3 rounded-full backdrop-blur border border-slate-700 transition opacity-0 group-hover:opacity-100 shadow-xl">
+                    <i data-lucide="chevron-right" class="w-6 h-6"></i>
+                </button>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 py-4 px-6 text-center text-xs text-slate-500">
+        Cloud Security Operations & Incident Response Visualizer | Microsoft Sentinel & Defender XDR
+    </footer>
+
+    <!-- Interactive Scripting Engine -->
+    <script>
+        const icons = {
+            entra: `<svg class="w-8 h-8 text-sky-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+            vm: `<svg class="w-8 h-8 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>`,
+            storage: `<svg class="w-8 h-8 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+            aws_iam: `<svg class="w-8 h-8 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+            imds: `<svg class="w-8 h-8 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+            rds: `<svg class="w-8 h-8 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>`
+        };
+
+        const attackData = {
+            identity: {
+                title: "Pathway 1: Identity Token Theft to Storage Exfiltration",
+                steps: [
+                    {
+                        stepNum: 1,
+                        name: "Initial Compromise",
+                        nodeName: "Entra ID Account",
+                        type: "threat",
+                        icon: icons.entra,
+                        sopTitle: "1. Scoping Entra ID Token Theft",
+                        sopSteps: [
+                            "Query SigninLogs for UserPrincipalName where RiskState == 'atRisk'.",
+                            "Extract IPAddress, UserAgent, and parse LocationDetails (city, countryOrRegion).",
+                            "Verify if sign-in originated from a non-compliant or unmanaged device in DeviceDetail."
+                        ],
+                        soarTitle: "Noise Reduction & Validation",
+                        soarSteps: [
+                            "Check if source IP matches corporate VPN / egress proxy whitelist.",
+                            "If matched: Auto-close incident as Benign False Positive (cuts ~35% queue noise).",
+                            "If untrusted external IP: Flag alert for high-priority Tier-2 analyst triage."
+                        ],
+                        kql: `SigninLogs\n| where TimeGenerated >= ago(24h)\n| where RiskState == "atRisk"\n| extend Country = tostring(LocationDetails.countryOrRegion)\n| project TimeGenerated, UserPrincipalName, IPAddress, Country, UserAgent, RiskState`
+                    },
+                    {
+                        stepNum: 2,
+                        name: "Cross-Cloud Pivot",
+                        nodeName: "AWS IAM Key Creation",
+                        type: "active",
+                        icon: icons.aws_iam,
+                        sopTitle: "2. Scoping SSO & IAM Privilege Escalation",
+                        sopSteps: [
+                            "Pivot to AWSCloudTrail logs filtering by UserIdentityArn linked to compromised UPN.",
+                            "Search for EventName == 'CreateAccessKey' or 'AssumeRoleWithSAML'.",
+                            "Extract newly generated AccessKeyId and requesting SourceIpAddress."
+                        ],
+                        soarTitle: "Baseline Cross-Correlation",
+                        soarSteps: [
+                            "Cross-reference IAM key creation timestamp with Entra ID SSO session tokens.",
+                            "If key creation matches an approved DevOps deployment window, auto-tag alert as Low priority.",
+                            "If unmapped window: Elevate alert severity for analyst scoping."
+                        ],
+                        kql: `AWSCloudTrail\n| where TimeGenerated >= ago(24h)\n| where EventName in ("CreateAccessKey", "AssumeRoleWithSAML")\n| project TimeGenerated, SourceIpAddress, UserIdentityArn, EventName, RequestParameters`
+                    },
+                    {
+                        stepNum: 3,
+                        name: "Target Data Exfiltration",
+                        nodeName: "Storage GetBlob / GetObject",
+                        type: "target",
+                        icon: icons.storage,
+                        sopTitle: "3. Auditing Storage Data Exfiltration",
+                        sopSteps: [
+                            "Query StorageBlobLogs filtering for OperationName in ('GetBlob', 'GetBlobProperties').",
+                            "Parse CallerIpAddress (stripping port number via split) to calculate total exfiltrated bytes.",
+                            "If TotalBytes > 1GB, escalate directly to Incident Commander for data loss assessment."
+                        ],
+                        soarTitle: "Volume Suppression & Triage Routing",
+                        soarSteps: [
+                            "Logic App evaluates aggregated ResponseBodySize across short time windows.",
+                            "Filter out standard backup pipelines and scheduled data sync jobs from SOC queue.",
+                            "Pass enriched exfiltration metadata (total bytes, IP, bucket name) directly to analyst ticket."
+                        ],
+                        kql: `StorageBlobLogs\n| where TimeGenerated >= ago(12h)\n| where OperationName in ("GetBlob", "GetBlobProperties")\n| extend SourceIP = tostring(split(CallerIpAddress, ":")[0])\n| summarize ExfiltratedBytes = sum(ResponseBodySize) by SourceIP, AccountName\n| where ExfiltratedBytes > 1000000000`
+                    }
+                ]
+            },
+            compute: {
+                title: "Pathway 2: Workload Exploit, IMDS Theft & DB Recon",
+                steps: [
+                    {
+                        stepNum: 1,
+                        name: "Workload Exploit",
+                        nodeName: "Public Web Server (EC2/VM)",
+                        type: "threat",
+                        icon: icons.vm,
+                        sopTitle: "1. Web Worker Process Lineage Scoping",
+                        sopSteps: [
+                            "Inspect DeviceProcessEvents for web processes (nginx, w3wp.exe, www-data).",
+                            "Look for child shell processes spawned (bash, sh, cmd.exe, powershell.exe).",
+                            "MANDATE: Sever host network sockets via EDR. DO NOT power off VM (preserves RAM)."
+                        ],
+                        soarTitle: "Alert Enrichment & Queue Filtering",
+                        soarSteps: [
+                            "Filter out known vulnerability scanner agents operating within scheduled test windows.",
+                            "Enrich incident card with parent/child process command-line hierarchy for Tier-2 analyst.",
+                            "Defer host socket isolation to manual analyst execution to prevent service outage."
+                        ],
+                        kql: `DeviceProcessEvents\n| where TimeGenerated >= ago(24h)\n| where InitiatingProcessFileName in~ ("nginx", "w3wp.exe", "www-data")\n| where FileName in~ ("bash", "sh", "cmd.exe", "powershell.exe")\n| project TimeGenerated, DeviceName, InitiatingProcessFileName, ProcessCommandLine`
+                    },
+                    {
+                        stepNum: 2,
+                        name: "IMDS Credential Theft",
+                        nodeName: "IMDS (169.254.169.254)",
+                        type: "active",
+                        icon: icons.imds,
+                        sopTitle: "2. Scoping Metadata Service Query",
+                        sopSteps: [
+                            "Filter EDR command-line events for requests targeting '169.254.169.254'.",
+                            "Check AWSCloudTrail for AssumedRole API calls using temporary 'ASIA...' STS keys.",
+                            "Determine if STS keys are being used from an external, non-AWS IP address."
+                        ],
+                        soarTitle: "Baseline Noise Suppression",
+                        soarSteps: [
+                            "Auto-suppress recurring alerts generated by authorized monitoring tools accessing IMDS.",
+                            "Correlate STS key usage location; highlight non-internal IP usage on analyst dashboard.",
+                            "No automated credential revocation; defer scoping to Tier-2 analyst."
+                        ],
+                        kql: `DeviceProcessEvents\n| where TimeGenerated >= ago(24h)\n| where ProcessCommandLine contains "169.254.169.254"\n| project TimeGenerated, DeviceName, AccountName, ProcessCommandLine`
+                    },
+                    {
+                        stepNum: 3,
+                        name: "Internal Reconnaissance",
+                        nodeName: "Internal Database Scan",
+                        type: "target",
+                        icon: icons.rds,
+                        sopTitle: "3. Internal Network Flow Audit",
+                        sopSteps: [
+                            "Query VPCFlowLogs or AzureDiagnostics for traffic originating from compromised VM IP.",
+                            "Filter for destination ports matching databases (3306 MySQL, 1433 MSSQL, 5432 Postgres).",
+                            "Determine if any database connection attempt returned ACCEPT status."
+                        ],
+                        soarTitle: "Telemetry Aggregation & Routing",
+                        soarSteps: [
+                            "Aggregate high-frequency port scan alerts into a single consolidated incident ticket.",
+                            "Attach destination IP list and port attempt counts to streamline analyst investigation.",
+                            "No automated blocking; route ticket to SOC queue for manual containment."
+                        ],
+                        kql: `VPCFlowLogs\n| where TimeGenerated >= ago(12h)\n| where Action == "ACCEPT"\n| where DestinationPort in (3306, 1433, 5432)\n| project TimeGenerated, SourceIP, DestinationIP, DestinationPort, BytesSent`
+                    }
+                ]
+            },
+            database: {
+                title: "Pathway 3: Unauthorized DB Snapshot Sharing",
+                steps: [
+                    {
+                        stepNum: 1,
+                        name: "IAM Privilege Abuse",
+                        nodeName: "Compromised IAM Principal",
+                        type: "threat",
+                        icon: icons.aws_iam,
+                        sopTitle: "1. Auditing IAM Activity",
+                        sopSteps: [
+                            "Query AWSCloudTrail for UserIdentityArn modifying database configuration.",
+                            "Verify if the calling principal is authorized for database administration.",
+                            "Cross-reference source IP against administrative VPN ranges."
+                        ],
+                        soarTitle: "Activity Deduplication",
+                        soarSteps: [
+                            "Deduplicate repeated administrative API calls from the same session to avoid ticket spam.",
+                            "Cross-check principal against scheduled change management tickets.",
+                            "Assign priority score based on compliance baseline match."
+                        ],
+                        kql: `AWSCloudTrail\n| where TimeGenerated >= ago(24h)\n| where EventName in ("CreateDBSnapshot", "ModifyDBSnapshotAttribute")\n| project TimeGenerated, SourceIpAddress, UserIdentityArn, EventName`
+                    },
+                    {
+                        stepNum: 2,
+                        name: "Snapshot Generation",
+                        nodeName: "RDS DBSnapshot",
+                        type: "active",
+                        icon: icons.rds,
+                        sopTitle: "2. RDS Snapshot Scoping",
+                        sopSteps: [
+                            "Extract DBSnapshotIdentifier from AWSCloudTrail RequestParameters.",
+                            "Determine database engine, snapshot size, and target production identifier.",
+                            "Verify if snapshot was created during an authorized maintenance window."
+                        ],
+                        soarTitle: "Hygiene vs Threat Classification",
+                        soarSteps: [
+                            "Untagged Resource Alert: Trace creation principal via logs, tag dynamically, and route ticket directly to engineering owner (bypasses SOC queue).",
+                            "Active Threat Alert: If snapshot creation matches anomaly flags, route directly to Tier-2 SOC queue."
+                        ],
+                        kql: `AWSCloudTrail\n| where TimeGenerated >= ago(24h)\n| where EventName == "CreateDBSnapshot"\n| extend TargetSnapshot = tostring(parse_json(RequestParameters).dBSnapshotIdentifier)\n| project TimeGenerated, SourceIpAddress, UserIdentityArn, TargetSnapshot`
+                    },
+                    {
+                        stepNum: 3,
+                        name: "Cross-Account Exfiltration",
+                        nodeName: "External AWS Account",
+                        type: "target",
+                        icon: icons.storage,
+                        sopTitle: "3. Shared Account Verification",
+                        sopSteps: [
+                            "Parse RequestParameters for attributeValue (12-digit AWS Account ID).",
+                            "Cross-reference target Account ID against Enterprise Approved Whitelist.",
+                            "If Account ID is external/unapproved, confirm active data exfiltration incident."
+                        ],
+                        soarTitle: "Whitelist Check & Alert Prioritization",
+                        soarSteps: [
+                            "Compare target Account ID against enterprise approved partner/subsidiary whitelist.",
+                            "If matched: Auto-close alert as authorized cross-account operation.",
+                            "If unlisted: Immediately generate High-Severity SOC ticket with account details for manual analyst review."
+                        ],
+                        kql: `AWSCloudTrail\n| where TimeGenerated >= ago(24h)\n| where EventName == "ModifyDBSnapshotAttribute"\n| extend RequestParams = parse_json(RequestParameters)\n| extend TargetAccount = tostring(RequestParams.attributeValue)\n| where isnotempty(TargetAccount) and TargetAccount !contains "Approved-Enterprise-AccountID"`
+                    }
+                ]
+            }
+        };
+
+        let currentPathway = 'identity';
+        let currentStepIdx = 0;
+
+        function loadPathway(key) {
+            currentPathway = key;
+            currentStepIdx = 0;
+            const data = attackData[key];
+            
+            document.getElementById('path-title').innerText = data.title;
+
+            ['identity', 'compute', 'database'].forEach(k => {
+                const btn = document.getElementById(`btn-${k}`);
+                btn.className = (k === key)
+                    ? "w-full text-left p-3 rounded-lg border border-sky-500/30 bg-sky-500/10 transition group"
+                    : "w-full text-left p-3 rounded-lg border border-slate-800 bg-slate-800/40 hover:bg-slate-800 transition group";
+            });
+
+            const stepBar = document.getElementById('step-bar');
+            stepBar.innerHTML = '';
+            data.steps.forEach((step, idx) => {
+                const btn = document.createElement('button');
+                btn.onclick = () => selectStep(idx);
+                btn.id = `step-btn-${idx}`;
+                btn.className = `px-3 py-1.5 rounded-lg text-xs font-semibold transition border flex items-center space-x-1.5 ${
+                    idx === 0 ? 'bg-sky-500/20 text-sky-300 border-sky-500/40' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`;
+                btn.innerHTML = `<span class="w-4 h-4 rounded-full bg-slate-800 flex items-center justify-center text-[10px] font-bold">${step.stepNum}</span><span>${step.name}</span>`;
+                stepBar.appendChild(btn);
+            });
+
+            const container = document.getElementById('graph-container');
+            container.innerHTML = '';
+            data.steps.forEach((step, idx) => {
+                const nodeEl = document.createElement('div');
+                let borderStyle = 'node-active';
+                if (step.type === 'threat') borderStyle = 'node-threat';
+                if (step.type === 'target') borderStyle = 'node-target';
+
+                nodeEl.id = `graph-node-${idx}`;
+                nodeEl.className = `p-3.5 rounded-xl bg-slate-950 border-2 ${borderStyle} cursor-pointer hover:scale-105 transition flex flex-col items-center justify-center w-36 text-center shadow-lg z-10`;
+                nodeEl.onclick = () => selectStep(idx);
+                nodeEl.innerHTML = `
+                    <div class="mb-1.5">${step.icon}</div>
+                    <div class="text-xs font-bold text-slate-200 mb-0.5">${step.nodeName}</div>
+                    <span class="text-[9px] uppercase font-mono text-slate-400">Step ${step.stepNum}: ${step.name}</span>
+                `;
+
+                container.appendChild(nodeEl);
+
+                if (idx < data.steps.length - 1) {
+                    const arrow = document.createElement('div');
+                    arrow.className = 'text-slate-600 font-bold text-lg';
+                    arrow.innerText = '➔';
+                    container.appendChild(arrow);
+                }
+            });
+
+            selectStep(0);
+        }
+
+        function selectStep(idx) {
+            currentStepIdx = idx;
+            const data = attackData[currentPathway];
+            const step = data.steps[idx];
+
+            data.steps.forEach((_, i) => {
+                const btn = document.getElementById(`step-btn-${i}`);
+                const node = document.getElementById(`graph-node-${i}`);
+                if (i === idx) {
+                    btn.className = "px-3 py-1.5 rounded-lg text-xs font-semibold transition border flex items-center space-x-1.5 bg-sky-500/20 text-sky-300 border-sky-500/40";
+                    node.classList.add('defender-halo');
+                } else {
+                    btn.className = "px-3 py-1.5 rounded-lg text-xs font-semibold transition border flex items-center space-x-1.5 bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200";
+                    node.classList.remove('defender-halo');
+                }
+            });
+
+            document.getElementById('sop-title').innerText = step.sopTitle;
+            const sopList = document.getElementById('sop-steps');
+            sopList.innerHTML = '';
+            step.sopSteps.forEach(s => {
+                const li = document.createElement('li');
+                li.innerText = s;
+                sopList.appendChild(li);
+            });
+
+            document.getElementById('soar-title').innerText = step.soarTitle;
+            const soarList = document.getElementById('soar-steps');
+            soarList.innerHTML = '';
+            step.soarSteps.forEach(s => {
+                const li = document.createElement('li');
+                li.innerText = s;
+                soarList.appendChild(li);
+            });
+
+            document.getElementById('kql-code').innerText = step.kql;
+        }
+
+        // PDF.js Engine
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        const pdfUrl = 'Cloud_IR_Playbooks.pdf';
+        let pdfDoc = null, pageNum = 1, pageRendering = false, pageNumPending = null;
+        const canvas = document.getElementById('pdf-render-canvas'), ctx = canvas.getContext('2d');
+
+        function renderPage(num) {
+            pageRendering = true;
+            pdfDoc.getPage(num).then(function(page) {
+                const viewport = page.getViewport({ scale: 2.0 });
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                const renderContext = { canvasContext: ctx, viewport: viewport };
+                const renderTask = page.render(renderContext);
+                renderTask.promise.then(function() {
+                    pageRendering = false;
+                    if (pageNumPending !== null) {
+                        renderPage(pageNumPending);
+                        pageNumPending = null;
+                    }
+                });
+            });
+            document.getElementById('current-slide').textContent = num;
+        }
+
+        function queueRenderPage(num) {
+            if (pageRendering) { pageNumPending = num; } else { renderPage(num); }
+        }
+
+        function onPrevPage() { if (pageNum <= 1) return; pageNum--; queueRenderPage(pageNum); }
+        function onNextPage() { if (pageNum >= pdfDoc.numPages) return; pageNum++; queueRenderPage(pageNum); }
+
+        document.getElementById('prev-slide').addEventListener('click', onPrevPage);
+        document.getElementById('next-slide').addEventListener('click', onNextPage);
+        document.getElementById('hover-prev').addEventListener('click', onPrevPage);
+        document.getElementById('hover-next').addEventListener('click', onNextPage);
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') onPrevPage();
+            if (e.key === 'ArrowRight') onNextPage();
+        });
+
+        document.getElementById('fullscreen-btn').addEventListener('click', () => {
+            const container = document.getElementById('presentation-container');
+            if (container.requestFullscreen) container.requestFullscreen();
+            else if (container.webkitRequestFullscreen) container.webkitRequestFullscreen();
+        });
+
+        window.onload = () => {
+            lucide.createIcons();
+            loadPathway('identity');
+
+            pdfjsLib.getDocument(pdfUrl).promise.then(function(pdfDoc_) {
+                pdfDoc = pdfDoc_;
+                document.getElementById('total-slides').textContent = pdfDoc.numPages;
+                renderPage(pageNum);
+            }).catch(function (error) {
+                console.error('PDF Load Error:', error);
+            });
+        };
+    </script>
+</body>
+</html>
