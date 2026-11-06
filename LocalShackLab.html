@@ -325,6 +325,14 @@ flowchart LR
       <code>10.0.12.34</code>. This is what legitimate instance activity looks like.</figcaption>
     </figure>
     <figure>
+      <img src="assets/evidence-p2-imds.png" alt="Expanded AssumeRole event showing IMDS credential theft">
+      <figcaption><strong>P2 — credential theft (IMDS)</strong> — the <code>AssumeRole</code> that mints
+      the instance credential. <code>userIdentity.type: AWSService</code> with
+      <code>invokedBy: ec2.amazonaws.com</code> is the metadata service handing out the role, and
+      <code>responseElements.credentials.accessKeyId: ASIAIMDSSSRF002</code> is the exact token reused in
+      the Scan below — linking the two events.</figcaption>
+    </figure>
+    <figure>
       <img src="assets/evidence-p2-scan.png" alt="Expanded DynamoDB Scan event showing instance-role abuse">
       <figcaption><strong>P2 smoking gun</strong> — the <em>same</em> instance role
       (<code>ASIAIMDSSSRF002</code>) now running a full-table <code>Scan</code>
