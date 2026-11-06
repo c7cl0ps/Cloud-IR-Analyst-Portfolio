@@ -339,6 +339,14 @@ flowchart LR
       (<code>ALL_ATTRIBUTES</code>, <code>scannedCount: 48,213</code>) from external
       <code>198.51.100.23</code>. Instance credentials used off-instance = IMDS theft.</figcaption>
     </figure>
+    <figure>
+      <img src="assets/evidence-p3-snapshot.png" alt="Expanded ModifyDBSnapshotAttribute event showing unauthorized snapshot sharing">
+      <figcaption><strong>P3 smoking gun</strong> — <code>ModifyDBSnapshotAttribute</code> on
+      <code>bank-core-db-exfil</code> with <code>attributeName: restore</code> and
+      <code>valuesToAdd: ["999988887777"]</code> — the snapshot is shared to an unknown external AWS
+      account. Done by the backdoor user <code>rogue-admin-backdoor</code>
+      (<code>accessKeyId: AKIAROGUEBACKDOOR</code>) from <code>192.0.2.88</code>.</figcaption>
+    </figure>
   </div>
 </section>
 
