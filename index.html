@@ -8,7 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- PDF.js Library -->
+    <!-- PDF.js Engine -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <style>
         body { background-color: #0b0f19; color: #f1f5f9; font-family: system-ui, -apple-system, sans-serif; }
@@ -50,15 +50,15 @@
                 <div class="space-y-2">
                     <button onclick="loadPathway('identity')" id="btn-identity" class="w-full text-left p-3 rounded-lg border border-sky-500/30 bg-sky-500/10 transition group">
                         <div class="font-semibold text-sm text-sky-300">Pathway 1: Identity & Storage Exfil</div>
-                        <div class="text-xs text-slate-400 mt-1">Entra ID Token Theft → IAM Key → GetBlob</div>
+                        <div class="text-xs text-slate-400 mt-1">Entra ID Token Theft → IAM Key → S3 GetObject / GetBlob</div>
                     </button>
                     <button onclick="loadPathway('compute')" id="btn-compute" class="w-full text-left p-3 rounded-lg border border-slate-800 bg-slate-800/40 hover:bg-slate-800 transition group">
                         <div class="font-semibold text-sm text-slate-300">Pathway 2: Workload RCE & IMDS</div>
-                        <div class="text-xs text-slate-400 mt-1">Public Exploit → IMDS 169.254.169.254 → DB Scan</div>
+                        <div class="text-xs text-slate-400 mt-1">Public Web Exploit → IMDS 169.254.169.254 → AWSVPCFlow</div>
                     </button>
                     <button onclick="loadPathway('database')" id="btn-database" class="w-full text-left p-3 rounded-lg border border-slate-800 bg-slate-800/40 hover:bg-slate-800 transition group">
                         <div class="font-semibold text-sm text-slate-300">Pathway 3: Snapshot Hijacking</div>
-                        <div class="text-xs text-slate-400 mt-1">IAM Compromise → ModifyDBSnapshot → Sharing</div>
+                        <div class="text-xs text-slate-400 mt-1">IAM Compromise → ModifyDBSnapshot → Cross-Account</div>
                     </button>
                 </div>
             </div>
@@ -259,27 +259,28 @@
                     {
                         stepNum: 3,
                         name: "Target Data Exfiltration",
-                        nodeName: "Storage GetBlob / GetObject",
+                        nodeName: "AWS S3 / Azure Storage",
                         type: "target",
                         icon: icons.storage,
-                        sopTitle: "3. Auditing Storage Data Exfiltration",
+                        sopTitle: "3. Auditing Multi-Cloud Data Exfiltration (GetObject & GetBlob)",
                         sopSteps: [
-                            "Query StorageBlobLogs filtering for OperationName in ('GetBlob', 'GetBlobProperties').",
-                            "Parse CallerIpAddress (stripping port number via split) to calculate total exfiltrated bytes.",
-                            "If TotalBytes > 1GB, escalate directly to Incident Commander for data loss assessment."
+                            "AWS S3: Query AWSCloudTrail for EventName in ('GetObject', 'BatchGetObject') linked to the IAM AccessKeyId.",
+                            "Azure Storage: Query StorageBlobLogs for OperationName in ('GetBlob', 'GetBlobProperties').",
+                            "Parse SourceIpAddress / CallerIpAddress to calculate aggregated outbound transfer volume.",
+                            "If TotalBytesExfiltrated > 1GB from an external IP, escalate immediately to Incident Commander."
                         ],
                         soarTitle: "Volume Suppression & Triage Routing",
                         soarSteps: [
-                            "Logic App evaluates aggregated ResponseBodySize across short time windows.",
-                            "Filter out standard backup pipelines and scheduled data sync jobs from SOC queue.",
-                            "Pass enriched exfiltration metadata (total bytes, IP, bucket name) directly to analyst ticket."
+                            "Filter out approved automated backup jobs and scheduled cloud migration pipelines.",
+                            "Deduplicate repeated GetObject / GetBlob telemetry into a single SOC incident card.",
+                            "Enrich ticket with aggregated byte counts, target bucket names, and source IP geolocation."
                         ],
-                        kql: `StorageBlobLogs\n| where TimeGenerated >= ago(12h)\n| where OperationName in ("GetBlob", "GetBlobProperties")\n| extend SourceIP = tostring(split(CallerIpAddress, ":")[0])\n| summarize ExfiltratedBytes = sum(ResponseBodySize) by SourceIP, AccountName\n| where ExfiltratedBytes > 1000000000`
+                        kql: `// Multi-Cloud Data Exfiltration Scoping (AWS GetObject & Azure GetBlob)\nlet AWS_Exfil = AWSCloudTrail\n| where TimeGenerated >= ago(24h)\n| where EventName in ("GetObject", "BatchGetObject")\n| extend SourceIP = SourceIpAddress, Bucket = tostring(parse_json(RequestParameters).bucketName)\n| summarize TotalBytes = sum(tolong(parse_json(AdditionalEventData).bytesTransferredOut)) by SourceIP, Bucket;\n\nlet Azure_Exfil = StorageBlobLogs\n| where TimeGenerated >= ago(24h)\n| where OperationName in ("GetBlob", "GetBlobProperties")\n| extend SourceIP = tostring(split(CallerIpAddress, ":")[0])\n| summarize TotalBytes = sum(ResponseBodySize) by SourceIP, Bucket = AccountName;\n\nunion AWS_Exfil, Azure_Exfil\n| where TotalBytes > 1000000000`
                     }
                 ]
             },
             compute: {
-                title: "Pathway 2: Workload Exploit, IMDS Theft & DB Recon",
+                title: "Pathway 2: Workload Exploit, IMDS Theft & AWSVPCFlow Recon",
                 steps: [
                     {
                         stepNum: 1,
@@ -324,14 +325,14 @@
                     {
                         stepNum: 3,
                         name: "Internal Reconnaissance",
-                        nodeName: "Internal Database Scan",
+                        nodeName: "AWSVPCFlow Database Scan",
                         type: "target",
                         icon: icons.rds,
-                        sopTitle: "3. Internal Network Flow Audit",
+                        sopTitle: "3. Internal Network Flow Audit (AWSVPCFlow)",
                         sopSteps: [
-                            "Query VPCFlowLogs or AzureDiagnostics for traffic originating from compromised VM IP.",
-                            "Filter for destination ports matching databases (3306 MySQL, 1433 MSSQL, 5432 Postgres).",
-                            "Determine if any database connection attempt returned ACCEPT status."
+                            "Query AWSVPCFlow logs for traffic originating from the compromised EC2 instance IP (SrcAddr).",
+                            "Filter for destination ports matching internal database services (3306 MySQL, 1433 MSSQL, 5432 Postgres).",
+                            "Determine if any database connection attempt returned Action == 'ACCEPT'."
                         ],
                         soarTitle: "Telemetry Aggregation & Routing",
                         soarSteps: [
@@ -339,7 +340,7 @@
                             "Attach destination IP list and port attempt counts to streamline analyst investigation.",
                             "No automated blocking; route ticket to SOC queue for manual containment."
                         ],
-                        kql: `VPCFlowLogs\n| where TimeGenerated >= ago(12h)\n| where Action == "ACCEPT"\n| where DestinationPort in (3306, 1433, 5432)\n| project TimeGenerated, SourceIP, DestinationIP, DestinationPort, BytesSent`
+                        kql: `AWSVPCFlow\n| where TimeGenerated >= ago(12h)\n| where Action == "ACCEPT"\n| where DstPort in (3306, 1433, 5432, 1521)\n| project TimeGenerated, SrcAddr, DstAddr, DstPort, Protocol, Action, Bytes\n| order by TimeGenerated desc`
                     }
                 ]
             },
@@ -507,7 +508,7 @@
             document.getElementById('kql-code').innerText = step.kql;
         }
 
-        // PDF.js Engine
+        // PDF.js Engine Setup
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         const pdfUrl = 'Cloud_IR_Playbooks.pdf';
         let pdfDoc = null, pageNum = 1, pageRendering = false, pageNumPending = null;
