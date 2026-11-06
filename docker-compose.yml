@@ -34,7 +34,7 @@ services:
     image: localstack/localstack:3.5
     container_name: soc-localstack
     environment:
-      - SERVICES=s3,iam,sts,cloudtrail
+      - SERVICES=s3,iam,sts,ec2,dynamodb,cloudtrail
       - DEBUG=0
       - DEFAULT_REGION=us-east-1
     ports:
