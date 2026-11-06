@@ -101,7 +101,7 @@ def create_index():
 
 
 def _event(minutes_ago, name, source, identity, src_ip, request, response,
-           detection, mitre, severity, pathway, resource_type, target, error=None):
+           detection, mitre, severity, pathway, resource_type, target, error=None, extra=None):
     ts = (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
     doc = {
         "eventVersion": "1.08",
@@ -124,6 +124,8 @@ def _event(minutes_ago, name, source, identity, src_ip, request, response,
     }
     if error:
         doc["errorCode"] = error
+    if extra:
+        doc["additionalEventData"] = extra
     return doc
 
 
@@ -131,29 +133,42 @@ def pathway1_events():
     """Identity Token Theft to Storage Exfiltration."""
     p = "P1: Identity Token Theft -> Storage Exfil"
     role_arn = f"arn:aws:iam::{ACCOUNT_ID}:role/FinancialTransactionProcessorRole"
-    assumed = {"type": "AssumedRole", "arn":
-               f"arn:aws:sts::{ACCOUNT_ID}:assumed-role/FinancialTransactionProcessorRole/token-theft"}
+    leaked_user = {"type": "IAMUser", "userName": "leaked-ci-key",
+                   "accessKeyId": "AKIACILEAKED0KEY", "accountId": ACCOUNT_ID}
+    # The stolen temporary session — note accessKeyId starts ASIA (short-lived) and MFA is false
+    stolen_session = {
+        "type": "AssumedRole",
+        "arn": f"arn:aws:sts::{ACCOUNT_ID}:assumed-role/FinancialTransactionProcessorRole/token-theft",
+        "accessKeyId": "ASIATOKENTHEFT01",
+        "sessionContext": {
+            "sessionIssuer": {"type": "Role", "userName": "FinancialTransactionProcessorRole",
+                              "arn": role_arn},
+            "attributes": {"mfaAuthenticated": "false"},
+        },
+    }
     return [
-        _event(34, "GetCallerIdentity", "sts.amazonaws.com",
-               {"type": "IAMUser", "userName": "leaked-ci-key", "accountId": ACCOUNT_ID}, IP_P1,
-               {}, {"account": ACCOUNT_ID},
+        _event(34, "GetCallerIdentity", "sts.amazonaws.com", leaked_user, IP_P1,
+               {}, {"account": ACCOUNT_ID, "arn": f"arn:aws:iam::{ACCOUNT_ID}:user/leaked-ci-key"},
                "Identity Recon — GetCallerIdentity from new IP", "T1087", "LOW",
                p, "STS", "caller-identity"),
-        _event(33, "AssumeRole", "sts.amazonaws.com",
-               {"type": "IAMUser", "userName": "leaked-ci-key", "accountId": ACCOUNT_ID}, IP_P1,
-               {"roleArn": role_arn, "roleSessionName": "token-theft"},
-               {"credentials": {"accessKeyId": "ASIATOKENTHEFT01"}},
+        _event(33, "AssumeRole", "sts.amazonaws.com", leaked_user, IP_P1,
+               {"roleArn": role_arn, "roleSessionName": "token-theft", "durationSeconds": 3600},
+               {"credentials": {"accessKeyId": "ASIATOKENTHEFT01", "expiration": "+60m"},
+                "assumedRoleUser": {"arn": stolen_session["arn"]}},
                "Stolen Identity — Role Assumption", "T1552.005", "CRITICAL",
                p, "IAM", "FinancialTransactionProcessorRole"),
-        _event(31, "ListBuckets", "s3.amazonaws.com", assumed, IP_P1,
-               {}, {}, "S3 Bucket Discovery", "T1619", "MEDIUM",
-               p, "S3", "all-buckets"),
-        _event(29, "GetObject", "s3.amazonaws.com", assumed, IP_P1,
+        _event(31, "ListBuckets", "s3.amazonaws.com", stolen_session, IP_P1,
+               {}, {"buckets": ["bofa-soc-central-logs", "bofa-customer-pii"]},
+               "S3 Bucket Discovery", "T1619", "MEDIUM", p, "S3", "all-buckets"),
+        # SMOKING GUN: assumed-role session reads the most sensitive bucket from an external IP,
+        # moving ~46 MB out (bytesTransferredOut).
+        _event(29, "GetObject", "s3.amazonaws.com", stolen_session, IP_P1,
                {"bucketName": "bofa-customer-pii", "key": "exports/cardholder-2026.csv"}, {},
                "Sensitive Data Exfiltration — PII bucket read", "T1530", "CRITICAL",
-               p, "S3", "bofa-customer-pii"),
-        _event(28, "GetObject", "s3.amazonaws.com",
-               {"type": "IAMUser", "userName": "leaked-ci-key", "accountId": ACCOUNT_ID}, IP_P1,
+               p, "S3", "bofa-customer-pii",
+               extra={"bytesTransferredOut": 48210432, "AuthenticationMethod": "AuthHeader",
+                      "SignatureVersion": "SigV4", "x-amz-server-side-encryption": "AES256"}),
+        _event(28, "GetObject", "s3.amazonaws.com", stolen_session, IP_P1,
                {"bucketName": "bofa-soc-central-logs", "key": "AWSLogs/audit/cloudtrail.json"}, {},
                "Log Store Probe — AccessDenied on hardened bucket", "T1530", "MEDIUM",
                p, "S3", "bofa-soc-central-logs", error="AccessDenied"),
@@ -163,52 +178,76 @@ def pathway1_events():
 def pathway2_events():
     """Workload Exploit, IMDS Theft & DB Recon."""
     p = "P2: Workload Exploit + IMDS + DB Recon"
-    ec2_role = {"type": "AssumedRole", "arn":
-                f"arn:aws:sts::{ACCOUNT_ID}:assumed-role/EC2-Web-InstanceRole/i-0abc123web"}
+    role_arn = f"arn:aws:iam::{ACCOUNT_ID}:role/EC2-Web-InstanceRole"
+    # The EC2 instance-profile session. The SAME session appears below from two very
+    # different source IPs: the instance's private VPC IP (benign) and an external IP (theft).
+    inst_session = {
+        "type": "AssumedRole",
+        "arn": f"arn:aws:sts::{ACCOUNT_ID}:assumed-role/EC2-Web-InstanceRole/i-0abc123web",
+        "accessKeyId": "ASIAIMDSSSRF002",
+        "sessionContext": {
+            "sessionIssuer": {"type": "Role", "userName": "EC2-Web-InstanceRole", "arn": role_arn},
+            "ec2RoleDelivery": "2.0",
+        },
+    }
     return [
+        # BASELINE (benign): the instance role used legitimately from inside the VPC (private IP).
+        # This is what "normal" looks like — the contrast is the whole point.
+        _event(50, "GetItem", "dynamodb.amazonaws.com", inst_session, "10.0.12.34",
+               {"tableName": "TransactionsDB", "key": {"account": "ACME-0204"}},
+               {"item": {"account": "ACME-0204"}},
+               "Baseline — instance-role activity from VPC", "T1078", "INFO",
+               p, "DynamoDB", "TransactionsDB"),
         _event(22, "AssumeRole", "sts.amazonaws.com",
                {"type": "AWSService", "invokedBy": "ec2.amazonaws.com"}, IP_P2,
-               {"roleArn": f"arn:aws:iam::{ACCOUNT_ID}:role/EC2-Web-InstanceRole",
-                "roleSessionName": "i-0abc123web"},
+               {"roleArn": role_arn, "roleSessionName": "i-0abc123web"},
                {"credentials": {"accessKeyId": "ASIAIMDSSSRF002"}},
                "IMDS Credential Theft via SSRF (workload exploit)", "T1552.005", "CRITICAL",
                p, "EC2", "i-0abc123web"),
-        _event(21, "DescribeInstances", "ec2.amazonaws.com", ec2_role, IP_P2,
-               {}, {}, "Workload Reconnaissance — DescribeInstances", "T1580", "MEDIUM",
-               p, "EC2", "all-instances"),
-        _event(20, "DescribeDBInstances", "rds.amazonaws.com", ec2_role, IP_P2,
+        # SMOKING GUN: the instance-profile session now acting from an EXTERNAL IP (198.51.100.23)
+        # instead of 10.0.12.34 — instance creds are being used off-instance.
+        _event(21, "DescribeInstances", "ec2.amazonaws.com", inst_session, IP_P2,
+               {}, {}, "Workload Reconnaissance — DescribeInstances (role off-instance)",
+               "T1580", "MEDIUM", p, "EC2", "all-instances"),
+        _event(20, "DescribeDBInstances", "rds.amazonaws.com", inst_session, IP_P2,
                {}, {}, "Database Reconnaissance — DescribeDBInstances", "T1580", "MEDIUM",
                p, "RDS", "all-db-instances"),
-        _event(18, "Scan", "dynamodb.amazonaws.com", ec2_role, IP_P2,
-               {"tableName": "TransactionsDB"}, {"scannedCount": 48213},
+        # SMOKING GUN: full-table Scan (ALL_ATTRIBUTES, 48k rows) vs the single-key GetItem baseline.
+        _event(17, "Scan", "dynamodb.amazonaws.com", inst_session, IP_P2,
+               {"tableName": "TransactionsDB", "select": "ALL_ATTRIBUTES"},
+               {"count": 48213, "scannedCount": 48213},
                "Bulk Database Read — DynamoDB Scan", "T1213", "HIGH",
-               p, "DynamoDB", "TransactionsDB"),
-        _event(17, "GetItem", "dynamodb.amazonaws.com", ec2_role, IP_P2,
-               {"tableName": "TransactionsDB", "key": {"account": "VIP-0001"}}, {},
-               "Targeted Record Access — DynamoDB GetItem", "T1213", "MEDIUM",
-               p, "DynamoDB", "TransactionsDB"),
+               p, "DynamoDB", "TransactionsDB", extra={"requestId": "SCAN-EXFIL-48213"}),
     ]
 
 
 def pathway3_events():
     """Unauthorized DB Snapshot Sharing."""
     p = "P3: Unauthorized DB Snapshot Sharing"
-    attacker = {"type": "IAMUser", "userName": "rogue-admin-backdoor", "accountId": ACCOUNT_ID}
+    attacker = {"type": "IAMUser", "userName": "rogue-admin-backdoor",
+                "accessKeyId": "AKIAROGUEBACKDOOR", "accountId": ACCOUNT_ID}
     return [
         _event(11, "CreateDBSnapshot", "rds.amazonaws.com", attacker, IP_P3,
                {"dBInstanceIdentifier": "bank-core-db",
-                "dBSnapshotIdentifier": "bank-core-db-exfil"}, {},
+                "dBSnapshotIdentifier": "bank-core-db-exfil"},
+               {"dBSnapshotIdentifier": "bank-core-db-exfil", "status": "creating"},
                "Snapshot Created of production DB", "T1074", "MEDIUM",
                p, "RDS", "bank-core-db"),
+        # SMOKING GUN: valuesToAdd shares the snapshot with an UNKNOWN external account (999988887777).
         _event(10, "ModifyDBSnapshotAttribute", "rds.amazonaws.com", attacker, IP_P3,
                {"dBSnapshotIdentifier": "bank-core-db-exfil",
                 "attributeName": "restore",
-                "valuesToAdd": [ATTACKER_ACCOUNT]}, {},
+                "valuesToAdd": [ATTACKER_ACCOUNT]},
+               {"dBSnapshotAttributesResult": {"attributeName": "restore",
+                                               "attributeValues": [ATTACKER_ACCOUNT]}},
                "Unauthorized Snapshot Sharing to external account", "T1537", "CRITICAL",
                p, "RDS", f"bank-core-db-exfil -> acct {ATTACKER_ACCOUNT}"),
+        # SMOKING GUN: valuesToAdd 'all' = restorable by EVERY AWS account (fully public).
         _event(9, "ModifyDBSnapshotAttribute", "rds.amazonaws.com", attacker, IP_P3,
                {"dBSnapshotIdentifier": "bank-core-db-exfil",
-                "attributeName": "restore", "valuesToAdd": ["all"]}, {},
+                "attributeName": "restore", "valuesToAdd": ["all"]},
+               {"dBSnapshotAttributesResult": {"attributeName": "restore",
+                                               "attributeValues": ["all"]}},
                "Snapshot Made Public (restore=all)", "T1537", "CRITICAL",
                p, "RDS", "bank-core-db-exfil"),
         _event(8, "ModifyImageAttribute", "ec2.amazonaws.com", attacker, IP_P3,
